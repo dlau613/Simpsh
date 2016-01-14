@@ -1,0 +1,53 @@
+Lab 1. Simpleton Shell
+
+Daniel Lau: 104163808
+
+Introduction
+The SIMPleton SHell is a simple stripped down shell that is run by passing the command arguments telling it which files to access, and what subcommands to execute.
+
+Limitations
+-When wait is declared, it will poll all the child processes for a set amount of time before giving up so it doesn't get stuck
+if one is in an infinite loop
+-If wait isn't declared and the subcommands have errors then those exit statuses are not retrieved and exit status will be 0
+-Commands that require arguments but aren't given any aren't handled with well becaus getopt_long skips the option which
+	stops it from being verbosed in my implementation
+
+
+Exit Codes
+
+0. Success
+1. Any error
+
+
+Had it set up to have more error codes (like below) but was confused by spec
+1. Syntax Error or Error opening File
+2. Command error (invalid file descriptors or execvp failed)
+
+SOME EXAMPLES
+
+./simpsh --rdnly --rdonly a --wronly c --wronly d --command 0 1 2 cat --wait
+exit_status = 0. the --rdnly is not recognized as an option by getopt_long and the rest will run successfully. 
+
+./simpsh --rdonly --rdonly a --wronly c --wronly d --command 0 1 2 cat --wait
+exit_status = 0. getopt recognizes --rdonly with no argument and this is a syntax error.
+the command executes successfully and is waited for so 0 is the maximum of all subcommands
+
+./simpsh --rdonly a --wronly c --wronly d --command 0 1 3 cat 
+exit_status = 0. no syntax errors. 3 is an invalid file descriptor but --wait is not declared so we don't
+retrieve the error of the child process running the subcommand
+
+./simpsh --rdonly a --wronly c --wronly d --command 0 1 3 cat --wait
+exit_status = 1. this time --wait is declared
+
+./simpsh --rdonly a --wronly c --wronly d --command 0 1 2 cats 
+exit_status = 0. valid file descriptor now but invalid subcommand "cats". wait is not declared though
+
+./simpsh --rdonly a --wronly c --wronly d --command 0 1 2 cats --wait
+exit_status = 1. --wait is declared this time
+
+
+
+
+
+
+
