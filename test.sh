@@ -26,10 +26,6 @@ function should_succeed() {
   fi
 }
 
-# a=$(mkstemp a)
-# b=$(mkstemp b)
-# c=$(mkstemp c)
-# d=$(mkstemp d)
 >a
 >b
 >c
@@ -96,6 +92,16 @@ should_succeed "invalid subommand, no wait"
 ./simpsh --rdonly a --wronly c --wronly d --command 0 1 2 cats --wait 2>&1 | grep "STATUS: 1" > /dev/null
 should_succeed "wait is declared and there is a invalid subcommand"
 
-./simpsh --rdonly dafds --rdonly a --wronly c --wronly d --command 1 2 3 cat --wait 
+./simpsh --rdonly dafds --rdonly a --wronly c --wronly d --command 1 2 3 cat --wait 2>&1 | grep "STATUS: 0" > /dev/null
+should_succeed "failed rdonly/wronly still takes up a logical file descriptor"
+
+# ./simpsh --rdonly dafds --rdonly a --wronly c --wronly d --command 1 2 3 cat --wait --abort 2>&1 | grep "Segmentation" > /dev/null
+# should_succeed "abort is working, i think"
+
+./simpsh --catch 11 --abort 2>&1 | grep "11 caught" > /dev/null
+should_succeed "caught segmentation fault"
+
+./simpsh --catch 11 --ignore 11 --abort --rdonly a --wronly c --wronly d --command 0 1 2 cat --wait 2>&1 | grep "STATUS: 0" > /dev/null
+should_succeed "ignored abort and executed command"
 
 echo "Woohoo"

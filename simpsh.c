@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+// #define _XOPEN_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -10,13 +12,25 @@
 #include <signal.h>
 #include <errno.h>
 #include <ctype.h>
+#include <signal.h>
 
-//./simpsh --rdonly a --pipe --pipe --creat --trunc --wronly c --creat --append --wronly d --command 0 2 6 sort --command 1 4 6 cat b - --command 3 5 6 tr a-z A-Z
+#include <ucontext.h>
+#include <sys/mman.h>
+
+
 static int append_flag = 0, cloexec_flag = 0, creat_flag = 0, directory_flag = 0, dsync_flag = 0, excl_flag = 0, nofollow_flag = 0, 
 	nonblock_flag = 0, rsync_flag = 0, sync_flag = 0, trunc_flag = 0;
 static int verbose_flag = 0, wait_flag = 0;
 
-
+void segfault_sighandler(int signal, siginfo_t* s, void * arg) {
+	printf("%d caught\n", signal);
+	exit(signal);
+}
+void segfault_sighandler_ignore(int signal, siginfo_t*  s, void * arg) {
+  printf("trying to ignore\n");
+	ucontext_t  *context = (ucontext_t *) arg;
+	context->uc_mcontext.gregs[REG_RIP]++;
+}
 int main(int argc, char *argv[]) 
 {
 	int length = argc;
@@ -33,18 +47,18 @@ int main(int argc, char *argv[])
 	int status;
 	int pid_total;
 	int exit_status;
-	// char * cmd_args[argc];
 	char * option_args[argc];
 	char * string_status;
 	char temp_buff[1000];
 	int temp;
 	char * command_stats[argc];
+	int errnum;
 	int option_index = 0;
-	// int temp_buff_size = 0;
+
 	for (i = 0; i < length; i++) {//initialize as -1 otherwise they're all valid as 0
 		fd[i] = -1;
 	}
-	k = 0;
+
 	for (i = 0; i < argc; i++) {
 		pid_done[i] = 0;
 		option_args[i] = NULL;
@@ -52,7 +66,7 @@ int main(int argc, char *argv[])
 	}
 	temp = 0;
 	exit_status = 0;
-	// p = 0;
+	k = 0; //keeps track of the number of subcommands
 	while(1)//use getopt_long to get one option at a time from left to right and execute it
 	{
 		static struct option long_options[] =
@@ -81,13 +95,14 @@ int main(int argc, char *argv[])
 			{"wait", no_argument, &wait_flag, 1},
 
 			//miscellaneous options
+			{"close", required_argument, 0, 'j'},
 			{"verbose", no_argument, 0, 'v'},
 			{"profile", no_argument, 0, 1},
 			{"abort", no_argument, 0, 'a'},
-			{"catch", required_argument, 0, 1},
-			{"ignore", required_argument, 0, 1},
-			{"default", required_argument, 0, 1},
-			{"pause", no_argument, 0, 1},
+			{"catch", required_argument, 0, 'e'},
+			{"ignore", required_argument, 0, 'i'},
+			{"default", required_argument, 0, 'd'},
+			{"pause", no_argument, 0, 'f'},
 
 			{0, 0, 0, 0}
 		};
@@ -96,7 +111,6 @@ int main(int argc, char *argv[])
 		c= getopt_long(argc,argv, "", long_options, &option_index);
 		if (c == -1)
 		{
-			// printf("DONE\n");
 			for (j=0; j < length; j++) {
 				close(fd[j]);
 			}
@@ -116,62 +130,55 @@ int main(int argc, char *argv[])
 					fprintf(stderr, "Syntax error: --%s requires exactly 0 arguments\n", long_options[option_index].name);
 					continue;
 				}
-		// printf("option is : %s and optarg is: %s\n", long_options[option_index].name,optarg);
-		//get all the arguments for each option
-		// if (argv[optind][0] != '-')
-			// if (argv[optind][1] != '-') 
-				option_args[0] = optarg;
+
+		option_args[0] = optarg;
 		i = 1;
-		// if (optarg != NULL) //need to add the length of the first argument to the buff size
-		// 	temp_buff_size = strlen(optarg) +1;
 		while (optind < argc ){//pull and store extra arguments till the next option is reached
-			if (argv[optind][0] == '-') {
+			if (argv[optind][0] == '-') {//stop when you reach the next option
 				if (argv[optind][1] == '-')
 					break;
 			}
 			option_args[i] = argv[optind];
-			// temp_buff_size += (strlen(argv[optind]) + 1);//keep track of the size of the arguments to allocate a buffer later
 			i++;									
 			optind++;
 		}
 		option_args[i] = NULL;//last one should be NULL for execvp (also helps for determing how many args there are)
 		
 		i = 0;
-		// temp_buff = (char*) malloc(temp_buff_size);
-		strcpy(temp_buff, "\0");
+		strcpy(temp_buff, "\0");//temp_buff holds all the option arguments
 		while (option_args[i] != NULL) {//turn all the option_args into one nice string
 			strcat(temp_buff, option_args[i]);
 			strcat(temp_buff, " ");
 			i++;
 		}
-		//format the string to be printed out if --verbose was declared
+		//format the string to be printed out if --verbose was declared. add the option in front of the args
 		asprintf(&string_status, "--%s %s\n", long_options[option_index].name, temp_buff);
 		if (verbose_flag) //PUT THIS BACK LATER
 			printf("%s", string_status);
 		
 
-		//check for syntax errors
-		if (long_options[option_index].has_arg == no_argument)
-			if (option_args[1] != NULL) {
+		//check for syntax errors after we've put together the 
+		if (long_options[option_index].has_arg == no_argument) //if 0 args required then NULL is stored into option_args[0]
+			if (option_args[1] != NULL) {//check if option_args one isn't NULL
 				fprintf(stderr, "Syntax error: --%s requires exactly 0 arguments\n", long_options[option_index].name);
 				exit_status = 1;
-				continue;
+				continue;//print the syntax error, set exit_status and keep going
 			}
 		if (long_options[option_index].has_arg == required_argument) {
-			if (c == 'c') {
+			if (c == 'c') {//if it was the --command option
 				if (option_args[3] == NULL) { //if there's only three arguments then break
 					fprintf(stderr, "Syntax error: --command requires at least 4 arguments\n");
 					exit_status = 1;
 					continue;
 				}
 			}
-			else {
-				if (option_args[1] != NULL) {
+			else {//if not the --command option but requires argument, then there should be exactly one argument
+				if (option_args[1] != NULL) {//then there's more than 1 argument
 					fprintf(stderr, "Syntax error: --%s requires exactly 1 argument , optarg is %s\n", long_options[option_index].name,option_args[1]);
 					exit_status = 1;
 					continue;
 				}
-				if (option_args[0] == NULL) {
+				if (option_args[0] == NULL) {//then there was no argument
 					fprintf(stderr, "Syntax error: --%s requires exactly 1 argument , optarg is %s\n", long_options[option_index].name,option_args[1]);
 					exit_status = 1;
 					continue;
@@ -187,12 +194,13 @@ int main(int argc, char *argv[])
 			case 1:
 				break;
 
-			case 'a':
-				raise(SIGABRT);
-				// abort();
+			case 'a': { //abort
+				int * a = NULL;
+				int b = *a;
 				break;
+			}
 
-			case 'c':
+			case 'c': {//command
 				if (isdigit(option_args[0][0])) //if the first argument (input) is not a number then break
 					input = atoi(option_args[0]);
 				else {
@@ -215,7 +223,7 @@ int main(int argc, char *argv[])
 					break;
 				}
 				
-				pid[k] = fork();
+				pid[k] = fork();//keep track of all the child process id numbers to be waited on at the end
 				if (pid[k] == -1) {
 					fprintf(stderr,"System call fork failed: %s\n", strerror(errno));
 				}
@@ -249,7 +257,6 @@ int main(int argc, char *argv[])
 					// if (fdinfo[output] != 0)
 					// 	close(fd[input-1]);
 					if (execvp(option_args[3], option_args+3) == -1) {
-						exit_status = 3;
 						fprintf(stderr,"System call execvp failed: %s\n", strerror(errno));
 						exit(1); 
 					}
@@ -268,143 +275,158 @@ int main(int argc, char *argv[])
 							exit_status = 1;
 						}
 					}
-					// waitpid(pid, &status, 0);
-					//PUT TOGETHER THE COMMAND STATUS (to be printed out if wait is declared)
-					// printf("status is %d\n", WEXITSTATUS(status));
-					// printf("%d %s %s\n",WEXITSTATUS(status),long_options[option_index].name, temp_buff);
-					// asprintf(&command_stats[k], "%d %s %s\n",WEXITSTATUS(status),long_options[option_index].name, temp_buff);
+					//make string with format "--command optarg1 optarg2 ...."
 					asprintf(&command_stats[k], "%s %s\n", long_options[option_index].name, temp_buff);
-					// printf("%s", command_stats[k]);
-					k++;
+					k++;//increment the number of subcommands
 				}
-				// k++;
-				// printf("done with command \n");
 				break;
+			}
 
 
-			case 'b'://FINISH THIS
-				fd1 = open(optarg, O_RDWR);
+			case 'b': {//rdwr
+				if ((fd1 = open(optarg, O_RDWR | append_flag*O_APPEND | cloexec_flag*O_CLOEXEC | creat_flag*O_CREAT | directory_flag*O_DIRECTORY |
+					dsync_flag*O_DSYNC | excl_flag*O_EXCL | nofollow_flag*O_NOFOLLOW | nonblock_flag*O_NONBLOCK | /*rsync_flag*O_RSYNC | */
+					sync_flag*O_SYNC | trunc_flag*O_TRUNC , 0644)) == -1)
+					errnum == errno;
+				fd[logical_fd] = fd1;
+				fdinfo[logical_fd++] = 0;//fdinfo[i]=1 means its a pipe
 				if (fd1 == -1) 
 				{
 					fprintf(stderr, "Error opening file named %s: %s\n", optarg, strerror(errno));
 					exit_status = 1;
-					break;
+					// break;
 				}
-				fd[fd1-3] = fd1;
-				fdinfo[fd1-3] = 0;
+				append_flag =0; cloexec_flag =0; creat_flag=0; directory_flag=0; dsync_flag=0; excl_flag=0; 
+					nofollow_flag=0; nonblock_flag=0; rsync_flag=0; sync_flag=0; trunc_flag=0;
 				// printf("%s fd is %d\n",optarg,fd1);
 				break;
+			}
 
-			case 'r':
-				fd1 = open(optarg, O_RDONLY | append_flag*O_APPEND | cloexec_flag*O_CLOEXEC | creat_flag*O_CREAT | directory_flag*O_DIRECTORY |
+			case 'r': {//read
+				if ((fd1 = open(optarg, O_RDONLY | append_flag*O_APPEND | cloexec_flag*O_CLOEXEC | creat_flag*O_CREAT | directory_flag*O_DIRECTORY |
 					dsync_flag*O_DSYNC | excl_flag*O_EXCL | nofollow_flag*O_NOFOLLOW | nonblock_flag*O_NONBLOCK | /*rsync_flag*O_RSYNC | */
-					sync_flag*O_SYNC | trunc_flag*O_TRUNC , 0644);
-				// printf("logical fd is %d\n", logical_fd);
+					sync_flag*O_SYNC | trunc_flag*O_TRUNC , 0644)) == -1)
+					errnum = errno;
+				printf("logical fd is %d, actual fd is %d\n", logical_fd, fd1);
 				fd[logical_fd] = fd1;
-				fdinfo[logical_fd] = 0;
-				logical_fd++;
+				fdinfo[logical_fd++] = 0;
 				if (fd1 == -1)
 				{
-					// fd[fd1-3] = -1;
-					// fdinfo[fd1-3] = 0;
-					
-					fprintf(stderr, "Error opening file named %s: %s\n", optarg, strerror(errno));
+					fprintf(stderr, "Error opening file named %s: %s\n", optarg, strerror(errnum));
 					exit_status = 1;
-					break;
+					// break;
 				}
-				// fd[fd1-3] = fd1;
-				// fdinfo[fd1-3] = 0;
-				// printf("%s fd is %d \n",optarg,fd1);
 				append_flag =0; cloexec_flag =0; creat_flag=0; directory_flag=0; dsync_flag=0; excl_flag=0; 
 					nofollow_flag=0; nonblock_flag=0; rsync_flag=0; sync_flag=0; trunc_flag=0;
 				break;
+			}
 
-			case 'w':
-				fd1 = open(optarg, O_WRONLY  | append_flag*O_APPEND | cloexec_flag*O_CLOEXEC | creat_flag*O_CREAT | directory_flag*O_DIRECTORY |
+			case 'w': {//write
+				if ((fd1 = open(optarg, O_WRONLY  | append_flag*O_APPEND | cloexec_flag*O_CLOEXEC | creat_flag*O_CREAT | directory_flag*O_DIRECTORY |
 					dsync_flag*O_DSYNC | excl_flag*O_EXCL | nofollow_flag*O_NOFOLLOW | nonblock_flag*O_NONBLOCK | /*rsync_flag*O_RSYNC | */
-					sync_flag*O_SYNC | trunc_flag*O_TRUNC , 0644);
-				// printf("logical fd is %d\n",logical_fd);
+					sync_flag*O_SYNC | trunc_flag*O_TRUNC , 0644)) == -1)
+					errnum = errno;
+				printf("logical fd is %d, actual fd is %d\n",logical_fd, fd1);
 				fd[logical_fd] = fd1;
-				fdinfo[logical_fd] = 0;
-				logical_fd++;
+				fdinfo[logical_fd++] = 0;
 				if (fd1 == -1) 
 				{
-					// fd[fd1-3] = -1;
-					// fdinfo[fd1-3] = 0;
-					fprintf(stderr, "Error opening file named %s: %s\n", optarg, strerror(errno));
+					fprintf(stderr, "Error opening file named %s: %s\n", optarg, strerror(errnum));
 					exit_status = 1;
-					break;
+					// break;
 				}
-				// fd[fd1-3] = fd1;
-				// fdinfo[fd1-3] = 0;
-				
-				// printf("%s fd is %d \n",optarg,fd1);
 				append_flag =0; cloexec_flag =0; creat_flag=0; directory_flag=0; dsync_flag=0; excl_flag=0; 
 					nofollow_flag=0; nonblock_flag=0; rsync_flag=0; sync_flag=0; trunc_flag=0;
 				break;
+			}
 
-
-			case 'p':
+			case 'p': {//pipe
 				i = pipe(fdpipe);
 
 				if(i == -1)
 					fprintf(stderr, "Error making pipe: %s\n", strerror(errno));
 				fd[logical_fd] = fdpipe[0];
-				fdinfo[logical_fd] = 1;
-				logical_fd++;
+				fdinfo[logical_fd++] = 1;
 				fd[logical_fd] = fdpipe[1];
-				fdinfo[logical_fd] = -1;
-				logical_fd++;
-				// fd[fdpipe[0]-3] = fdpipe[0];
-				// fd[fdpipe[1]-3] = fdpipe[1];
-				// fdinfo[fdpipe[0]-3] = 1;
-				// fdinfo[fdpipe[1]-3] = -1;
+				fdinfo[logical_fd++] = 1;
 				// printf("pipe fd's are %d and %d\n", fdpipe[0], fdpipe[1]);	
 				break;
+			}
 
-			case 'v':
+			case 'j': {//close i
+				printf("closed logical fd %s, actual fd %d\n", optarg, fd[atoi(optarg)]);
+				fd[atoi(optarg)] = -1;
+				break;
+			}
+			case 'v': {//verbose
 				verbose_flag = 1;
 				break;
+			}
 
-			case '?':
-				printf("in question mark case \n");
-				exit_status = 1;
+			case 'd': {//default
+				struct sigaction sa;
+				sa.sa_handler = SIG_DFL;
+				sigaction(atoi(optarg), &sa, NULL);
 				break;
+			}
+			case 'e': {//catch
+				struct sigaction sa;
+				sa.sa_sigaction = segfault_sighandler;
+				sigaction(atoi(optarg), &sa, NULL);
+				break;
+			}
 
-			default:
+			case 'i': {//ignore
+			    struct sigaction sa;
+			  	sa.sa_sigaction = segfault_sighandler_ignore;
+			  	sigaction(atoi(optarg), &sa, NULL);
+				break;
+			}
+
+			case 'f': {//pause
+				pause();//is this all i do?
+				break;
+			}
+			case '?': {
+				printf("in question mark case \n");
+				exit_status = 1; //if something weird happens 
+				break;
+			}
+
+			default: {
 				abort();
+			}
 		}//end of switch
-		// free(temp_buff);
 		free(string_status);
 
 	}//end of while loop
-	// printf("k is %d\n", k);
-	// command_stats[k] == NULL;
+
 	for (i = 0; i < argc;i++)
 		pid_done[i] = 0;
 	pid_total = 0;
 	j = 0;
-	// printf("k is %d\n",k);
+	//if wait was declared then loop through all child processes polling them to see if they finished
+	//keep polling or can set a limit 
 	if (wait_flag) {
 		exit_status = 0;
-		while (pid_total != k && j < 100000000) {//will poll subprocesses in progress for a certain number of times
+		while (pid_total != k ) {//&& j < 100000000) {//will poll subprocesses in progress for a certain number of times
 			for (i = 0; i < k;i++) {
 				if (pid_done[i] != 1) {
 					if (waitpid(pid[i], &status, WNOHANG) != 0) {
-						pid_done[i] = 1;
-						pid_total++;
-						temp = WEXITSTATUS(status);
+						pid_done[i] = 1;//mark that the child returned
+						pid_total++;//increment the number of childs returned
+						temp = WEXITSTATUS(status);//see if the exit status is the highest yet
 						if (temp > exit_status)
 							exit_status = temp;
-						fprintf(stdout,"%d %s", temp, command_stats[i]);
+						fprintf(stdout,"%d %s", temp, command_stats[i]);//print exit status and command
 					}
 				}	
 			}
-			j++;
+			// j++;
 		}
 	}
-	if (j == 100000000)
-		fprintf(stderr, "A subprocess never returned, probably got stuck in an infinite loop\n");
+	// if (j == 100000000)
+	// 	fprintf(stderr, "A subprocess never returned, probably got stuck in an infinite loop\n");
 
 	fprintf(stdout, "EXIT STATUS: %d\n", exit_status);
 	exit(exit_status);
