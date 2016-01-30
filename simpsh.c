@@ -1,10 +1,11 @@
 #define _GNU_SOURCE
-// #define _XOPEN_SOURCE
+#define _XOPEN_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/resource.h>
 #include <fcntl.h>
 #include <string.h>
 #include <sys/wait.h>
@@ -13,6 +14,7 @@
 #include <errno.h>
 #include <ctype.h>
 #include <signal.h>
+#include <sys/time.h>
 
 #include <ucontext.h>
 #include <sys/mman.h>
@@ -20,16 +22,15 @@
 
 static int append_flag = 0, cloexec_flag = 0, creat_flag = 0, directory_flag = 0, dsync_flag = 0, excl_flag = 0, nofollow_flag = 0, 
 	nonblock_flag = 0, rsync_flag = 0, sync_flag = 0, trunc_flag = 0;
-static int verbose_flag = 0, wait_flag = 0;
+static int verbose_flag = 0, wait_flag = 0, profile_flag;
 
 void segfault_sighandler(int signal, siginfo_t* s, void * arg) {
 	printf("%d caught\n", signal);
 	exit(signal);
 }
 void segfault_sighandler_ignore(int signal, siginfo_t*  s, void * arg) {
-  printf("trying to ignore\n");
-	ucontext_t  *context = (ucontext_t *) arg;
-	context->uc_mcontext.gregs[REG_RIP]++;
+	// ucontext_t  *context = (ucontext_t *) arg;
+	// context->uc_mcontext.gregs[REG_RIP]++;
 }
 int main(int argc, char *argv[]) 
 {
@@ -54,6 +55,9 @@ int main(int argc, char *argv[])
 	char * command_stats[argc];
 	int errnum;
 	int option_index = 0;
+	struct timeval user_start, user_end, kernel_start, kernel_end;
+	struct rusage usage;
+	double user_time, kernel_time, total_user_time, total_kernel_time;
 
 	for (i = 0; i < length; i++) {//initialize as -1 otherwise they're all valid as 0
 		fd[i] = -1;
@@ -64,6 +68,8 @@ int main(int argc, char *argv[])
 		option_args[i] = NULL;
 		command_stats[i] = 0;
 	}
+	total_user_time = 0;
+	total_kernel_time = 0;
 	temp = 0;
 	exit_status = 0;
 	k = 0; //keeps track of the number of subcommands
@@ -92,12 +98,12 @@ int main(int argc, char *argv[])
 
 			//subcommand options
 			{"command", required_argument, 0, 'c'},
-			{"wait", no_argument, &wait_flag, 1},
+			{"wait", no_argument, 0, 'k'},
 
 			//miscellaneous options
 			{"close", required_argument, 0, 'j'},
 			{"verbose", no_argument, 0, 'v'},
-			{"profile", no_argument, 0, 1},
+			{"profile", no_argument, 0, 'z'},//cpu time in user mode, kernel mode, total cpu time
 			{"abort", no_argument, 0, 'a'},
 			{"catch", required_argument, 0, 'e'},
 			{"ignore", required_argument, 0, 'i'},
@@ -109,6 +115,14 @@ int main(int argc, char *argv[])
 
 		option_index = 0;
 		c= getopt_long(argc,argv, "", long_options, &option_index);
+
+		if (getrusage(RUSAGE_SELF, &usage) == -1) {
+			errnum = errno;
+			fprintf(stderr, "Error running rusage: %s\n",strerror(errno));
+		}
+		user_start = usage.ru_utime;
+		kernel_start = usage.ru_stime;
+
 		if (c == -1)
 		{
 			for (j=0; j < length; j++) {
@@ -118,7 +132,7 @@ int main(int argc, char *argv[])
 		}
 		if (c == '?') {
 			// optind--;
-			// printf("optarg is %s\n",optarg);
+			printf("optarg is %s\n",optarg);
 			continue;
 		}
 		if (optarg != NULL)//if there is a command that takes exactly one argument but has none
@@ -185,6 +199,7 @@ int main(int argc, char *argv[])
 				}
 			}
 		}
+
 
 		switch(c)
 		{
@@ -256,6 +271,7 @@ int main(int argc, char *argv[])
 					// 	close(fd[input+1]);
 					// if (fdinfo[output] != 0)
 					// 	close(fd[input-1]);
+
 					if (execvp(option_args[3], option_args+3) == -1) {
 						fprintf(stderr,"System call execvp failed: %s\n", strerror(errno));
 						exit(1); 
@@ -264,13 +280,17 @@ int main(int argc, char *argv[])
 				else {	
 					// printf("this is parent\n");
 					if (fdinfo[input] != 0)	{//if input is the read end of the pipe, close it
+						printf("closing read end of pipe %d\n", input);
 						if (close(fd[input]) == -1) {
+							printf("failed to close read end\n");
 							fprintf(stderr, "aSystem call close failed on logical file descriptor %d: %s\n",input, strerror(errno));
 							exit_status = 1;
 						}
 					}
 					if (fdinfo[output] != 0) {//if output is the write end of the pipe, close it 
+						printf("closing write end of pipe %d\n", output);
 						if (close(fd[output]) == -1) {
+							printf("failed to close write end\n");
 							fprintf(stderr, "bSystem call close failed on logical file descriptor %d: %s\n",output, strerror(errno));
 							exit_status = 1;
 						}
@@ -287,7 +307,7 @@ int main(int argc, char *argv[])
 				if ((fd1 = open(optarg, O_RDWR | append_flag*O_APPEND | cloexec_flag*O_CLOEXEC | creat_flag*O_CREAT | directory_flag*O_DIRECTORY |
 					dsync_flag*O_DSYNC | excl_flag*O_EXCL | nofollow_flag*O_NOFOLLOW | nonblock_flag*O_NONBLOCK | /*rsync_flag*O_RSYNC | */
 					sync_flag*O_SYNC | trunc_flag*O_TRUNC , 0644)) == -1)
-					errnum == errno;
+					errnum = errno;
 				fd[logical_fd] = fd1;
 				fdinfo[logical_fd++] = 0;//fdinfo[i]=1 means its a pipe
 				if (fd1 == -1) 
@@ -307,7 +327,7 @@ int main(int argc, char *argv[])
 					dsync_flag*O_DSYNC | excl_flag*O_EXCL | nofollow_flag*O_NOFOLLOW | nonblock_flag*O_NONBLOCK | /*rsync_flag*O_RSYNC | */
 					sync_flag*O_SYNC | trunc_flag*O_TRUNC , 0644)) == -1)
 					errnum = errno;
-				printf("logical fd is %d, actual fd is %d\n", logical_fd, fd1);
+				// printf("logical fd is %d, actual fd is %d\n", logical_fd, fd1);
 				fd[logical_fd] = fd1;
 				fdinfo[logical_fd++] = 0;
 				if (fd1 == -1)
@@ -326,7 +346,7 @@ int main(int argc, char *argv[])
 					dsync_flag*O_DSYNC | excl_flag*O_EXCL | nofollow_flag*O_NOFOLLOW | nonblock_flag*O_NONBLOCK | /*rsync_flag*O_RSYNC | */
 					sync_flag*O_SYNC | trunc_flag*O_TRUNC , 0644)) == -1)
 					errnum = errno;
-				printf("logical fd is %d, actual fd is %d\n",logical_fd, fd1);
+				// printf("logical fd is %d, actual fd is %d\n",logical_fd, fd1);
 				fd[logical_fd] = fd1;
 				fdinfo[logical_fd++] = 0;
 				if (fd1 == -1) 
@@ -354,7 +374,7 @@ int main(int argc, char *argv[])
 			}
 
 			case 'j': {//close i
-				printf("closed logical fd %s, actual fd %d\n", optarg, fd[atoi(optarg)]);
+				// printf("closed logical fd %s, actual fd %d\n", optarg, fd[atoi(optarg)]);
 				fd[atoi(optarg)] = -1;
 				break;
 			}
@@ -387,6 +407,14 @@ int main(int argc, char *argv[])
 				pause();//is this all i do?
 				break;
 			}
+
+			case 'k': {
+				wait_flag = 1;
+				break;
+			}
+
+			case 'z':
+				break;
 			case '?': {
 				printf("in question mark case \n");
 				exit_status = 1; //if something weird happens 
@@ -397,6 +425,28 @@ int main(int argc, char *argv[])
 				abort();
 			}
 		}//end of switch
+
+		//
+		if (profile_flag) {
+			if (c != 'k') {
+				if (getrusage(RUSAGE_SELF, &usage) == -1) {
+					errnum = errno;
+					fprintf(stderr, "Error running rusage: %s\n",strerror(errno));
+				}
+				user_end = usage.ru_utime;
+				kernel_end = usage.ru_stime;
+				user_time = ((double)user_end.tv_sec + (double)user_end.tv_usec/1000000) - 
+					((double)user_start.tv_sec + (double)user_start.tv_usec/1000000);
+				total_user_time += user_time;
+				kernel_time = ((double)kernel_end.tv_sec + (double)kernel_end.tv_usec/1000000) - 
+					((double)kernel_start.tv_sec + (double)kernel_start.tv_usec/1000000);
+				total_kernel_time += kernel_time;
+				fprintf(stdout, "%s - CPU Time in User Mode: %f, CPU Time in Kernel Mode: %f, Total CPU Time: %f\n", 
+					string_status, user_time,kernel_time, user_time+kernel_time);
+			}
+		}
+		if (c == 'z') 
+			profile_flag = 1;
 		free(string_status);
 
 	}//end of while loop
@@ -424,6 +474,26 @@ int main(int argc, char *argv[])
 			}
 			// j++;
 		}
+		if(profile_flag) {
+			if (getrusage(RUSAGE_SELF, &usage) == -1) {
+					errnum = errno;
+					fprintf(stderr, "Error running rusage: %s\n",strerror(errno));
+				}
+				user_end = usage.ru_utime;
+				kernel_end = usage.ru_stime;
+				user_time = ((double)user_end.tv_sec + (double)user_end.tv_usec/1000000) - 
+					((double)user_start.tv_sec + (double)user_start.tv_usec/1000000);
+				total_user_time += user_time;
+				kernel_time = ((double)kernel_end.tv_sec + (double)kernel_end.tv_usec/1000000) - 
+					((double)kernel_start.tv_sec + (double)kernel_start.tv_usec/1000000);
+				total_kernel_time += kernel_time;
+				fprintf(stdout, "%s - CPU Time in User Mode: %f, CPU Time in Kernel Mode: %f, Total CPU Time: %f\n", 
+					string_status, user_time,kernel_time, user_time+kernel_time);
+		}
+	}
+
+	if (profile_flag) {
+		fprintf(stdout, "Total Total CPU Time: %f\n", total_kernel_time+total_user_time);
 	}
 	// if (j == 100000000)
 	// 	fprintf(stderr, "A subprocess never returned, probably got stuck in an infinite loop\n");
@@ -431,3 +501,6 @@ int main(int argc, char *argv[])
 	fprintf(stdout, "EXIT STATUS: %d\n", exit_status);
 	exit(exit_status);
 }
+
+
+
