@@ -25,8 +25,7 @@ makefile also supports make clean, make check, and make dist
 benchmark1: (sort < a | cat b - | tr a-z A-Z > c) 2 >>d
 
 simpsh:
-./simpsh --profile --rdonly a --pipe --pipe --creat --trunc --wronly c --creat --append --wronly d --command 0 2 6
-sort --command 3 5 6 tr a-z A-Z --command 1 4 6 cat b - --wait
+./simpsh --profile --rdonly a --pipe --pipe --creat --trunc --wronly c --creat --append --wronly d --command 0 2 6 sort --command 3 5 6 tr a-z A-Z --command 1 4 6 cat b - --wait
 
 bash:
 time ((sort < a | cat b - | tr a-z A-Z > c) 2>>d )
@@ -48,8 +47,7 @@ redirfd -w 1 c tr a-z A-Z
 benchmark2: cat a | cat - a | cat - a a > c 2>>d
 
 simpsh:
-./simpsh --profile --rdonly a --pipe --pipe --creat --trunc --wronly c --creat --append --wronly d --command 0 2 6
-cat a --command 3 5 6 cat - a --command 1 4 6 cat - a a --wait
+./simpsh --profile --rdonly a --pipe --pipe --creat --trunc --wronly c --creat --append --wronly d --command 0 2 6 cat a --command 3 5 6 cat - a --command 1 4 6 cat - a a --wait
 
 bash:
 time (cat a | cat - a | cat - a a > c 2>>d)

@@ -70,6 +70,14 @@ should_succeed "--rdonly a --wronly c --wronly d --command cat 0 1 2 cat --wait"
 --command 1 4 6 cat b - --command 3 5 6 tr a-z A-Z --wait 2>&1 | grep "STATUS: 0" > /dev/null
 should_succeed "(sort < a | cat b - | tr a-z A-Z > c) 2>>d"
 
+./simpsh --rdonly a --pipe --pipe --creat --trunc --wronly c --creat --append --wronly d --command 1 4 6 cat b - \
+--command 0 2 6 sort --command 3 5 6 tr a-z A-Z --wait 2>&1 | grep "STATUS: 0" > /dev/null
+should_succeed "put commands out of order"
+
+./simpsh --rdonly a --pipe --pipe --creat --trunc --wronly c --creat --append --wronly d --command 0 2 6 sort \
+ --command 3 5 6 tr a-z A-Z --command 1 4 6 cat b - --wait 2>&1 | grep "STATUS: 0" > /dev/null
+ should_succeed "put commands out of order again"
+
 ./simpsh --rdonly a --pipe --pipe --creat --trunc --wronly c --creat --append --wronly d --command 0 2 6 sort \
 --command 1 4 6 cat b - --command 3 5 6 tra a-z A-Z --wait 2>&1 | grep "STATUS: 1" > /dev/null
 should_succeed "(sort < a | cat b - | tra a-z A-Z > c) 2>>d invald subcommand (tra) leads to error"
@@ -95,13 +103,26 @@ should_succeed "wait is declared and there is a invalid subcommand"
 ./simpsh --rdonly dafds --rdonly a --wronly c --wronly d --command 1 2 3 cat --wait 2>&1 | grep "STATUS: 0" > /dev/null
 should_succeed "failed rdonly/wronly still takes up a logical file descriptor"
 
+./simpsh --profile --rdonly a --pipe --pipe --creat --trunc --wronly c --creat --append --wronly d --command 0 2 6 sort \
+--command 3 5 6 tr a-z A-Z --command 1 4 6 cat b - --wait 2>&1 | grep "STATUS: 0" > /dev/null
+should_succeed "benchmark1"
+
+./simpsh --profile --rdonly a --pipe --pipe --creat --trunc --wronly c --creat --append --wronly d --command 0 2 6 cat a \
+--command 3 5 6 cat - a --command 1 4 6 cat - a a --wait 2>&1 | grep "STATUS: 0" >/dev/null
+should_succeed "benchmark2"
+
+./simpsh --profile --rdonly a --pipe --pipe --pipe --creat --trunc --wronly c --creat --append --wronly d --command 0 2 8 \
+sort --command 1 4 8 cat - a --command 3 6 8 tr '[:space:]' 'z' --command 5 7 8 uniq -c --wait 2>&1 | grep "STATUS: 0" > /dev/null
+should_succeed "benchmark3"
+
 # ./simpsh --rdonly dafds --rdonly a --wronly c --wronly d --command 1 2 3 cat --wait --abort 2>&1 | grep "Segmentation" > /dev/null
 # should_succeed "abort is working, i think"
 
-./simpsh --catch 11 --abort 2>&1 | grep "11 caught" > /dev/null
-should_succeed "caught segmentation fault"
+# ./simpsh --catch 11 --abort 2>&1 | grep "11 caught" > /dev/null
+# should_succeed "caught segmentation fault"
 
 ./simpsh --catch 11 --ignore 11 --abort --rdonly a --wronly c --wronly d --command 0 1 2 cat --wait 2>&1 | grep "STATUS: 0" > /dev/null
 should_succeed "ignored abort and executed command"
+
 
 echo "Woohoo"

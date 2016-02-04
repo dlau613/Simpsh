@@ -1,5 +1,5 @@
 #define _GNU_SOURCE
-#define _XOPEN_SOURCE
+// #define _XOPEN_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -25,13 +25,15 @@ static int append_flag = 0, cloexec_flag = 0, creat_flag = 0, directory_flag = 0
 static int verbose_flag = 0, wait_flag = 0, profile_flag;
 
 void segfault_sighandler(int signal, siginfo_t* s, void * arg) {
-	printf("%d caught\n", signal);
-	exit(signal);
+	fprintf(stdout, "%d caught\n", signal);
+	_exit(signal);
 }
+
 void segfault_sighandler_ignore(int signal, siginfo_t*  s, void * arg) {
-	// ucontext_t  *context = (ucontext_t *) arg;
-	// context->uc_mcontext.gregs[REG_RIP]++;
+	ucontext_t  *context = (ucontext_t *) arg;
+	context->uc_mcontext.gregs[REG_RIP]++;
 }
+
 int main(int argc, char *argv[]) 
 {
 	int length = argc;
@@ -47,17 +49,17 @@ int main(int argc, char *argv[])
 	int pid_done[argc];
 	int status;
 	int pid_total;
-	int exit_status;
+	int exit_status = 0;
 	char * option_args[argc];
 	char * string_status;
 	char temp_buff[1000];
-	int temp;
+	int temp = 0;
 	char * command_stats[argc];
 	int errnum;
 	int option_index = 0;
 	struct timeval user_start, user_end, kernel_start, kernel_end;
 	struct rusage usage;
-	double user_time, kernel_time, total_user_time, total_kernel_time;
+	double user_time, kernel_time, total_user_time = 0, total_kernel_time = 0;
 
 	for (i = 0; i < length; i++) {//initialize as -1 otherwise they're all valid as 0
 		fd[i] = -1;
@@ -68,10 +70,6 @@ int main(int argc, char *argv[])
 		option_args[i] = NULL;
 		command_stats[i] = 0;
 	}
-	total_user_time = 0;
-	total_kernel_time = 0;
-	temp = 0;
-	exit_status = 0;
 	k = 0; //keeps track of the number of subcommands
 	while(1)//use getopt_long to get one option at a time from left to right and execute it
 	{
@@ -89,21 +87,18 @@ int main(int argc, char *argv[])
 			{"rsync", no_argument, &rsync_flag,1},
 			{"sync", no_argument, &sync_flag,1},
 			{"trunc", no_argument, &trunc_flag,1},
-
 			//file opening options
 			{"rdonly", required_argument, 0, 'r'},
 			{"rdwr", required_argument, 0, 'b'},
 			{"wronly", required_argument, 0, 'w'},
 			{"pipe", no_argument, 0, 'p'},
-
 			//subcommand options
 			{"command", required_argument, 0, 'c'},
 			{"wait", no_argument, 0, 'k'},
-
 			//miscellaneous options
 			{"close", required_argument, 0, 'j'},
 			{"verbose", no_argument, 0, 'v'},
-			{"profile", no_argument, 0, 'z'},//cpu time in user mode, kernel mode, total cpu time
+			{"profile", no_argument, 0, 'z'},
 			{"abort", no_argument, 0, 'a'},
 			{"catch", required_argument, 0, 'e'},
 			{"ignore", required_argument, 0, 'i'},
@@ -157,7 +152,7 @@ int main(int argc, char *argv[])
 			optind++;
 		}
 		option_args[i] = NULL;//last one should be NULL for execvp (also helps for determing how many args there are)
-		
+
 		i = 0;
 		strcpy(temp_buff, "\0");//temp_buff holds all the option arguments
 		while (option_args[i] != NULL) {//turn all the option_args into one nice string
@@ -168,7 +163,7 @@ int main(int argc, char *argv[])
 		//format the string to be printed out if --verbose was declared. add the option in front of the args
 		asprintf(&string_status, "--%s %s\n", long_options[option_index].name, temp_buff);
 		if (verbose_flag) //PUT THIS BACK LATER
-			printf("%s", string_status);
+			fprintf(stdout, "%s", string_status);
 		
 
 		//check for syntax errors after we've put together the 
@@ -252,7 +247,7 @@ int main(int argc, char *argv[])
 						exit(1);
 					}
 					if (dup2(fd[error], 2) == -1) {
-						fprintf(stderr, "System call dup2 failed on logical file descriptor %d: %s\n", error, strerror(errno));
+						// fprintf(stderr, "System call dup2 failed on logical file descriptor %d: %s\n", error, strerror(errno));
 						exit(1);
 					}
 					if (close(fd[input]) == -1) {
@@ -264,13 +259,16 @@ int main(int argc, char *argv[])
 						exit(1);
 					}
 					if (close(fd[error]) == -1) {
-						fprintf(stderr, "System call close failed on logical file descriptor %d: %s\n",error, strerror(errno));
+						// fprintf(stderr, "System call close failed on logical file descriptor %d: %s\n",error, strerror(errno));
 						exit(1);
 					}
-					// if (fdinfo[input] != 0)
-					// 	close(fd[input+1]);
-					// if (fdinfo[output] != 0)
-					// 	close(fd[input-1]);
+
+					if (fdinfo[input] > 0)
+						if (fdinfo[input+1] > 0)
+							close(fd[input+1]);
+					if (fdinfo[output] > 0)
+						if (fdinfo[output-1] > 0)
+							close(fd[output-1]);
 
 					if (execvp(option_args[3], option_args+3) == -1) {
 						fprintf(stderr,"System call execvp failed: %s\n", strerror(errno));
@@ -279,21 +277,20 @@ int main(int argc, char *argv[])
 				}
 				else {	
 					// printf("this is parent\n");
-					if (fdinfo[input] != 0)	{//if input is the read end of the pipe, close it
-						printf("closing read end of pipe %d\n", input);
-						if (close(fd[input]) == -1) {
-							printf("failed to close read end\n");
-							fprintf(stderr, "aSystem call close failed on logical file descriptor %d: %s\n",input, strerror(errno));
-							exit_status = 1;
-						}
+					if (fdinfo[input] > 0)	{//if input is the read end of the pipe, close it
+						fdinfo[input] = -1;
+							if (close(fd[input]) == -1) {
+								fprintf(stderr, "aSystem call close failed on logical file descriptor %d: %s\n",input, strerror(errno));
+								exit_status = 1;
+							}
 					}
-					if (fdinfo[output] != 0) {//if output is the write end of the pipe, close it 
-						printf("closing write end of pipe %d\n", output);
+					if (fdinfo[output] > 0) {//if output is the write end of the pipe, close it 
+						fdinfo[output] = -1;
 						if (close(fd[output]) == -1) {
-							printf("failed to close write end\n");
 							fprintf(stderr, "bSystem call close failed on logical file descriptor %d: %s\n",output, strerror(errno));
 							exit_status = 1;
 						}
+
 					}
 					//make string with format "--command optarg1 optarg2 ...."
 					asprintf(&command_stats[k], "%s %s\n", long_options[option_index].name, temp_buff);
@@ -301,8 +298,6 @@ int main(int argc, char *argv[])
 				}
 				break;
 			}
-
-
 			case 'b': {//rdwr
 				if ((fd1 = open(optarg, O_RDWR | append_flag*O_APPEND | cloexec_flag*O_CLOEXEC | creat_flag*O_CREAT | directory_flag*O_DIRECTORY |
 					dsync_flag*O_DSYNC | excl_flag*O_EXCL | nofollow_flag*O_NOFOLLOW | nonblock_flag*O_NONBLOCK | /*rsync_flag*O_RSYNC | */
@@ -318,7 +313,6 @@ int main(int argc, char *argv[])
 				}
 				append_flag =0; cloexec_flag =0; creat_flag=0; directory_flag=0; dsync_flag=0; excl_flag=0; 
 					nofollow_flag=0; nonblock_flag=0; rsync_flag=0; sync_flag=0; trunc_flag=0;
-				// printf("%s fd is %d\n",optarg,fd1);
 				break;
 			}
 
@@ -365,9 +359,9 @@ int main(int argc, char *argv[])
 
 				if(i == -1)
 					fprintf(stderr, "Error making pipe: %s\n", strerror(errno));
-				fd[logical_fd] = fdpipe[0];
+				fd[logical_fd] = fdpipe[0];//read end
 				fdinfo[logical_fd++] = 1;
-				fd[logical_fd] = fdpipe[1];
+				fd[logical_fd] = fdpipe[1];//write end
 				fdinfo[logical_fd++] = 1;
 				// printf("pipe fd's are %d and %d\n", fdpipe[0], fdpipe[1]);	
 				break;
@@ -459,7 +453,7 @@ int main(int argc, char *argv[])
 	//keep polling or can set a limit 
 	if (wait_flag) {
 		exit_status = 0;
-		while (pid_total != k ) {//&& j < 100000000) {//will poll subprocesses in progress for a certain number of times
+		while (pid_total != k ) {
 			for (i = 0; i < k;i++) {
 				if (pid_done[i] != 1) {
 					if (waitpid(pid[i], &status, WNOHANG) != 0) {
@@ -472,9 +466,8 @@ int main(int argc, char *argv[])
 					}
 				}	
 			}
-			// j++;
 		}
-		if(profile_flag) {
+		if(profile_flag) {//includes profile time for parent process --wait as well
 			if (getrusage(RUSAGE_SELF, &usage) == -1) {
 					errnum = errno;
 					fprintf(stderr, "Error running rusage: %s\n",strerror(errno));
@@ -493,14 +486,10 @@ int main(int argc, char *argv[])
 	}
 
 	if (profile_flag) {
-		fprintf(stdout, "Total Total CPU Time: %f\n", total_kernel_time+total_user_time);
+		fprintf(stdout, "Total User Time: %f, Total Kernel Time: %f, Total Total CPU Time: %f\n", total_user_time, total_kernel_time, total_kernel_time+total_user_time);
 	}
-	// if (j == 100000000)
-	// 	fprintf(stderr, "A subprocess never returned, probably got stuck in an infinite loop\n");
 
 	fprintf(stdout, "EXIT STATUS: %d\n", exit_status);
 	exit(exit_status);
 }
-
-
 

@@ -1,5 +1,5 @@
-CC = gcc
-CLAGS = -g -Wall -Wextra -Wno-unused - Werror
+CC = gcc	
+CLAGS = -g -Wall -Wextra -Wno-unused 
 LAB = 1
 DISTDIR = lab1-$(USER)
 
